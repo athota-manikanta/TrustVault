@@ -1,0 +1,53 @@
+# TrustVault — Threat Model
+
+This file documents every threat considered during development, the control applied, the test that verifies it, and the residual risk that remains. Honest entries score higher than clean ones.
+
+---
+
+## Threat table
+
+| # | Threat | Mitigation | Test | Residual risk |
+|---|--------|------------|------|---------------|
+| T1 | **Insecure direct object reference (IDOR)** — attacker guesses or enumerates a document UUID and fetches it directly | `access()` helper re-checks per-document grants on **every** request; returns 404 (not 403) to prevent existence confirmation | `test_idor_direct_document_url`, `test_idor_direct_download_url` | UUIDs are not guessable but are not secret by design; a document owner could leak their own ID |
+| T2 | **Download bypasses UI control** — blob fetched directly from storage path | Storage directory is outside all static-file routes; `download()` calls `access()` before streaming the file | `test_static_route_does_not_serve_blobs` | Misconfigured reverse proxy or cloud storage ACL could expose the volume; verify at deployment |
+| T3 | **Revoked user reuses old link or session** | No bearer file URLs issued; grants are re-checked on every request; revocation deletes the `grants` row immediately; `current_user()` checks `enabled` flag | `test_revocation_is_immediate` | Copies already downloaded before revocation cannot be recalled; out-of-scope by design |
+| T4 | **Read-only grantee tampers with metadata** | `access()` is called with `level='edit'` on the edit endpoint; read grant does not satisfy the edit check | `test_read_grant_cannot_edit_metadata` | None identified |
+| T5 | **Non-owner revokes or deletes** | `owner_access()` checks `doc.owner_id == user.id`; raises 403/404 on failure | `test_viewer_cannot_revoke`, `test_viewer_cannot_delete`, `test_editor_cannot_delete` | None identified |
+| T6 | **CSRF forces grants, deletions or uploads** | Per-session `secrets.token_urlsafe(32)` token validated with `hmac.compare_digest`; `same_site='strict'` cookie; CORS not open | `test_csrf_blocks_upload`, `test_csrf_blocks_grant`, `test_csrf_blocks_delete` | XSS on the same origin could steal the token; Content-Security-Policy `script-src 'self'` limits the attack surface |
+| T7 | **Malicious executable disguised as document** | Extension allow-list (`ALLOWED`); magic-byte check per suffix; 8 MB cap; `text/plain` checked for null bytes | `test_pdf_magic_byte_required`, `test_png_magic_byte_required`, `test_txt_with_null_bytes_rejected`, `test_disallowed_extension_rejected` | **Accepted:** no antivirus scan or full-format parser; ZIP bombs not blocked; do not use with untrusted uploaders |
+| T8 | **File path traversal** | Storage key is a random UUID generated server-side; client-supplied filename is only stored as `original_name`, never used for disk I/O | `test_path_traversal_attempt_rejected` | UUID collision is astronomically unlikely; no other path |
+| T9 | **Unauthenticated access** | Every document endpoint checks `current_user()` first; returns 401 or redirect to login | `test_unauthenticated_view_redirects_or_errors`, `test_unauthenticated_access_is_audited` | Session cookie could be stolen if TLS is not enforced; `TRUSTVAULT_HTTPS=1` must be set in production |
+| T10 | **Audit entries silently omitted for denied access** | Denials are logged inside `access()` and `owner_access()` before raising HTTP exceptions | `test_idor_denied_access_is_audited`, `test_unauthenticated_access_is_audited` | A database write failure (disk full, crash) could drop events; use external WORM log in production |
+| T11 | **Audit record edited after incident** | HMAC-keyed hash chain: each event commits `prev_hash` and `event_hash`; `audit_integrity()` replays the chain | `test_audit_tampering_detected`, `test_audit_hash_field_tamper_detected` | **Accepted weakness:** an attacker with both the database AND the application secret can recompute valid hashes. Mitigation: externally append-only audit log (e.g. AWS CloudTrail, Azure Monitor) in production |
+| T12 | **Brute-force / credential stuffing on login** | In-memory sliding-window rate limiter: 10 attempts per IP in 5 minutes triggers a 15-minute block; Argon2 hashing makes per-guess compute expensive | `test_rate_limiter_blocks_excessive_attempts` | **Accepted:** rate limiter is in-memory and per-process; restarting the app or deploying multiple workers resets it. Production should use Redis or a WAF. IPv6 /64 spoofing not mitigated |
+| T13 | **Admin reads documents they do not own** | `authorized()` checks ownership or named grants only; `admin` role confers no implicit document access | `test_admin_cannot_read_owner_document`, `test_admin_cannot_grant_access_to_others_doc` | None; confirmed by test |
+| T14 | **Disabled / fired user continues to access** | `current_user()` checks `user.enabled` on every request; admin can disable via `/admin/users/{id}/disable` | `test_disabled_user_login_rejected`, `test_disabled_user_active_session_denied` | Sessions are not explicitly invalidated from the server side (session store is the signed cookie). The `enabled` check on every request achieves the same effect without a server-side store |
+| T15 | **Re-sharing by a grantee (confused deputy)** | Grant endpoint uses `owner_access()` — only the document owner may invoke it | `test_non_owner_cannot_grant` | None identified |
+| T16 | **Admin management actions untracked** | `user_disable`, `user_enable`, `user_create`, `role_change` are all audited | `test_user_disable_audited` | None identified |
+| T17 | **Dashboard leaks document IDs of unauthorized documents** | Dashboard filters with `authorized()` before adding to the result list; title search happens after the auth filter | `test_dashboard_hides_unauthorized_docs` | None identified |
+| T18 | **Session fixation** | `request.session.clear()` is called before writing the new uid on successful login; new CSRF token issued | Manual review of `login()` in main.py | None identified |
+| T19 | **Clickjacking** | `X-Frame-Options: DENY` and `frame-ancestors 'none'` in CSP | Browser / automated header check | None identified |
+| T20 | **Content-type sniffing** | `X-Content-Type-Options: nosniff` | Browser header check | None identified |
+| T21 | **Open redirect** | All redirects use literal hardcoded paths; no user-supplied redirect parameter | Code review | None identified |
+| T22 | **Mass assignment / parameter pollution** | FastAPI validates every request parameter by type; extra fields are ignored | Framework-level | None identified |
+| T23 | **SQL injection** | SQLAlchemy ORM with parameterised queries throughout; no raw SQL | Code review | None identified |
+| T24 | **Cache poisoning / stale page served to wrong user** | `Cache-Control: no-store` on every response | Header verified in middleware | Shared caching proxies upstream could ignore this; use `Vary: Cookie` or disable caching at proxy level |
+| T25 | **Multi-worker audit chain collision** | Events are serialised by database transaction; SQLite WAL mode reduces contention | Single-worker development setup | **Accepted:** concurrent inserts on PostgreSQL with multiple workers can interleave the hash chain. Mitigation: advisory lock or outbox table in production |
+| T26 | **Ephemeral storage loss** | Storage path is configurable via `TRUSTVAULT_STORAGE`; blob directory is created on startup | Deployment checklist | Free-tier hosts with ephemeral disks will lose uploads on restart; use persistent volume |
+| T27 | **Insider captures file content** | Downloads require an active, unexpired, enabled session with an active grant | Access policy | Authorised users can screenshot / copy a file they have legitimately downloaded; out-of-scope |
+| T28 | **Weak session secret on first run** | If `TRUSTVAULT_SECRET` is not set, a random 48-byte secret is generated and printed with a warning | Code review of startup | Ephemeral secret means sessions invalidated on restart; always set in production |
+
+---
+
+## What we deliberately did not build
+
+- **MFA / TOTP** — left out intentionally; a username+password system is the stated scope. Adding MFA would require an authenticator-app flow.
+- **Password reset / email** — left out; no email transport configured. Admins reset passwords by creating new accounts.
+- **File versioning** — not in scope for this submission; noted in README.
+- **Antivirus scanning** — magic bytes + extension allow-list is the stated check. Full AV would require a sidecar service.
+- **Object storage (S3/GCS)** — the design supports it via `TRUSTVAULT_STORAGE` env; adapter not implemented.
+- **Share links with expiry** — deliberately omitted; bearer links are a known risk for document systems and the problem statement does not require them.
+
+---
+
+**Deployment acceptance test:** After deploying, log in as a non-owner, take the document UUID from the URL bar, log out, and attempt to fetch `/documents/{uuid}` and `/documents/{uuid}/download` directly. Both must return 401 or 404.

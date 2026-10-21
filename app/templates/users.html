@@ -1,0 +1,135 @@
+{% extends 'base.html' %}
+{% block title %}User management{% endblock %}
+{% block crumb %}USERS{% endblock %}
+{% block content %}
+
+<div class="eyebrow">ADMINISTRATION / USER MANAGEMENT</div>
+<div class="heading-row">
+  <div>
+    <h1>User accounts<span class="period">.</span></h1>
+    <p>Create accounts, change roles, and disable access. Disabled users are denied immediately — even mid-session.</p>
+  </div>
+  <a href="/admin" class="btn btn-ghost" id="back-to-admin-btn">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"></polyline></svg>
+    Activity center
+  </a>
+</div>
+
+{% if error %}
+<div class="alert alert-error" role="alert">
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;margin-top:1px"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>
+  {{ error }}
+</div>
+{% endif %}
+
+<div class="two-column" style="align-items:start">
+  <!-- User list -->
+  <section class="panel">
+    <div class="section-heading">
+      <div>
+        <h2>All accounts</h2>
+        <p>{{ users|length }} registered user{{ 's' if users|length != 1 else '' }}</p>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table id="users-table">
+        <thead>
+          <tr>
+            <th>Username</th>
+            <th>Role</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for u in users %}
+          <tr>
+            <td>
+              <div style="display:flex;align-items:center;gap:10px">
+                <div class="avatar" style="width:28px;height:28px;font-size:11px">{{ u.username[0]|upper }}</div>
+                <span style="font-weight:600;color:var(--text)">{{ u.username }}</span>
+              </div>
+            </td>
+            <td>
+              <span class="role-badge role-{{ u.role }}">{{ u.role|upper }}</span>
+            </td>
+            <td>
+              {% if u.enabled %}
+              <span class="user-enabled" style="font-size:11px;font-weight:600">● Active</span>
+              {% else %}
+              <span class="user-disabled" style="font-size:11px;font-weight:600">○ Disabled</span>
+              {% endif %}
+            </td>
+            <td style="display:flex;gap:8px;flex-wrap:wrap">
+              <!-- Role change -->
+              <form method="post" action="/admin/users/{{ u.id }}/change-role" style="display:flex;gap:6px;align-items:center">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
+                <select name="role" id="role-select-{{ u.id }}" style="width:auto;padding:5px 8px;font-size:11px">
+                  {% for r in ['admin','owner','viewer'] %}
+                  <option value="{{ r }}" {% if u.role == r %}selected{% endif %}>{{ r }}</option>
+                  {% endfor %}
+                </select>
+                <button class="btn btn-ghost btn-sm" type="submit" id="change-role-btn-{{ u.id }}">Set</button>
+              </form>
+              <!-- Enable / disable -->
+              {% if u.enabled %}
+              <form method="post" action="/admin/users/{{ u.id }}/disable">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
+                <button class="btn btn-danger btn-sm" type="submit" id="disable-btn-{{ u.id }}" title="Disable account">Disable</button>
+              </form>
+              {% else %}
+              <form method="post" action="/admin/users/{{ u.id }}/enable">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
+                <button class="btn btn-secondary btn-sm" type="submit" id="enable-btn-{{ u.id }}" title="Enable account">Enable</button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Create user -->
+  <section class="panel">
+    <div class="section-heading">
+      <div>
+        <h2>Create account</h2>
+        <p>Accounts can only be created by administrators</p>
+      </div>
+    </div>
+    <form method="post" action="/admin/users/create" id="create-user-form">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+
+      <label for="new-username">Username</label>
+      <input id="new-username" name="username" required maxlength="60" placeholder="e.g. jane_doe" autocomplete="off">
+
+      <label for="new-password">Initial password</label>
+      <input id="new-password" name="password" type="password" required placeholder="Minimum 12 characters" autocomplete="new-password">
+      <span class="form-hint">User should be prompted to change on first login.</span>
+
+      <label for="new-role">Role</label>
+      <select id="new-role" name="role">
+        <option value="viewer">Viewer — can only read/download explicitly granted documents</option>
+        <option value="owner">Owner — can upload documents and grant access</option>
+        <option value="admin">Admin — can manage users and view audit log</option>
+      </select>
+
+      <div class="notice" style="margin-top:16px">
+        <strong style="font-size:12px;color:var(--text)">Role summary:</strong>
+        <ul style="margin:8px 0 0 16px;font-size:12px;line-height:1.8;color:var(--text-muted)">
+          <li><strong>Viewer</strong> — download only what is explicitly shared</li>
+          <li><strong>Owner</strong> — upload, grant, revoke, delete own documents</li>
+          <li><strong>Admin</strong> — manage users, view full audit log, own documents</li>
+        </ul>
+      </div>
+
+      <button class="btn btn-primary" type="submit" style="margin-top:18px" id="create-user-submit-btn">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><line x1="20" y1="8" x2="20" y2="14"></line><line x1="23" y1="11" x2="17" y2="11"></line></svg>
+        Create account
+      </button>
+    </form>
+  </section>
+</div>
+{% endblock %}

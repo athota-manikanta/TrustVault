@@ -1,0 +1,117 @@
+{% extends 'base.html' %}
+{% block title %}Create account{% endblock %}
+{% block crumb %}REGISTER{% endblock %}
+{% block content %}
+<div class="login-layout">
+  <div class="login-copy">
+    <div class="eyebrow">◈ JOIN TRUSTVAULT</div>
+    <h1>Create your<br><em>secure account.</em></h1>
+    <p>Self-registered accounts are created as <strong style="color:var(--accent)">Viewer</strong> role. An administrator can upgrade your role after registration.</p>
+
+    <div class="login-features" style="margin-top:32px">
+      <div class="login-feature">
+        <span class="feature-dot">1</span>
+        <span>Register as a Viewer</span>
+      </div>
+      <div class="login-feature">
+        <span class="feature-dot">2</span>
+        <span>Log in and ask an owner to share documents</span>
+      </div>
+      <div class="login-feature">
+        <span class="feature-dot">3</span>
+        <span>Admin can promote you to Owner or Admin</span>
+      </div>
+    </div>
+
+    <div class="notice" style="margin-top:28px;max-width:440px">
+      <strong style="font-size:12px;color:var(--text)">Role permissions:</strong>
+      <ul style="margin:8px 0 0 16px;font-size:12px;line-height:1.9;color:var(--text-muted)">
+        <li><strong style="color:var(--text)">Viewer</strong> — Download documents shared with you</li>
+        <li><strong style="color:var(--text)">Owner</strong> — Upload, share, and manage your documents</li>
+        <li><strong style="color:var(--text)">Admin</strong> — Manage all users and view audit log</li>
+      </ul>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:16px">
+    <section class="panel login-card">
+      <div class="login-logo">
+        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+          <circle cx="8.5" cy="7" r="4"></circle>
+          <line x1="20" y1="8" x2="20" y2="14"></line>
+          <line x1="23" y1="11" x2="17" y2="11"></line>
+        </svg>
+      </div>
+      <h2>Create account</h2>
+      <p>You'll be registered as a <strong style="color:var(--accent)">Viewer</strong>.</p>
+
+      {% if error %}
+      <div class="alert alert-error" role="alert">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;margin-top:1px"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>
+        {{ error }}
+      </div>
+      {% endif %}
+
+      {% if success %}
+      <div class="alert alert-info" role="alert">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;margin-top:1px"><polyline points="20 6 9 17 4 12"></polyline></svg>
+        {{ success }}
+      </div>
+      {% endif %}
+
+      <form method="post" action="/register" id="register-form">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+
+        <label for="reg-username">Username</label>
+        <input id="reg-username" name="username" required maxlength="60"
+               placeholder="Choose a username (letters, numbers, _)"
+               autocomplete="username" autofocus
+               pattern="[a-zA-Z0-9_]+" title="Only letters, numbers and underscores">
+
+        <label for="reg-password">Password</label>
+        <input id="reg-password" name="password" type="password" required
+               minlength="12" placeholder="Minimum 12 characters"
+               autocomplete="new-password">
+
+        <label for="reg-confirm">Confirm password</label>
+        <input id="reg-confirm" name="confirm" type="password" required
+               minlength="12" placeholder="Repeat your password"
+               autocomplete="new-password">
+
+        <div id="pw-match-hint" class="form-hint" style="display:none;color:var(--red)">Passwords do not match</div>
+
+        <button class="btn btn-primary btn-wide" type="submit" id="register-submit-btn" style="margin-top:18px">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><line x1="20" y1="8" x2="20" y2="14"></line><line x1="23" y1="11" x2="17" y2="11"></line></svg>
+          Create account
+        </button>
+      </form>
+
+      <p class="login-hint">
+        Already have an account?
+        <a href="/login" style="color:var(--accent);font-weight:600">Sign in →</a>
+      </p>
+    </section>
+  </div>
+</div>
+
+<script>
+const pw = document.getElementById('reg-password');
+const confirm = document.getElementById('reg-confirm');
+const hint = document.getElementById('pw-match-hint');
+function checkMatch() {
+  if (confirm.value && pw.value !== confirm.value) {
+    hint.style.display = 'block';
+    confirm.style.borderColor = 'var(--red)';
+  } else {
+    hint.style.display = 'none';
+    confirm.style.borderColor = '';
+  }
+}
+pw.addEventListener('input', checkMatch);
+confirm.addEventListener('input', checkMatch);
+document.getElementById('register-form').addEventListener('submit', e => {
+  if (pw.value !== confirm.value) { e.preventDefault(); hint.style.display='block'; }
+});
+</script>
+{% endblock %}
