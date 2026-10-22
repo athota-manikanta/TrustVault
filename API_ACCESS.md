@@ -4,17 +4,28 @@
 |---|---|---|
 | GET | `/health` | Public |
 | GET | `/login` | Public |
-| POST | `/login` | CSRF token and correct credentials |
+| POST | `/login` | CSRF token and correct credentials; rate-limited per IP |
 | POST | `/logout` | Valid CSRF token |
-| GET | `/` | Logged-in; only visible authorized documents |
+| GET | `/` | Logged-in; only documents the caller is authorized to see |
 | GET | `/documents/new` | Owner or admin role |
-| POST | `/documents` | Owner or admin role + CSRF; validate upload |
-| GET | `/documents/{id}` | Owner or explicit read/edit grant |
-| GET | `/documents/{id}/download` | Owner or explicit read/edit grant |
+| POST | `/documents` | Owner or admin role + CSRF; extension/magic-byte/size validation |
+| GET | `/documents/{id}` | Owner or explicit read/edit grant; 404 if missing or unauthorized |
+| GET | `/documents/{id}/download` | Owner or explicit read/edit grant; streams from private storage |
 | POST | `/documents/{id}/edit` | Owner or explicit edit grant + CSRF |
-| POST | `/documents/{id}/grants` | Document owner + CSRF |
-| POST | `/documents/{id}/revoke/{user_id}` | Document owner + CSRF |
-| POST | `/documents/{id}/delete` | Document owner + CSRF |
-| GET | `/admin` | Administrator role only (does not grant file access) |
+| POST | `/documents/{id}/grants` | Document owner only + CSRF |
+| POST | `/documents/{id}/revoke/{user_id}` | Document owner only + CSRF; takes effect on the next request |
+| POST | `/documents/{id}/delete` | Document owner only + CSRF |
+| GET | `/admin` | Administrator role only; shows audit log and user summary |
+| GET | `/admin/users` | Administrator role only; lists all users |
+| POST | `/admin/users/create` | Administrator role only + CSRF; validates username, role, password length |
+| POST | `/admin/users/{id}/disable` | Administrator role only + CSRF; blocks all future requests for that user |
+| POST | `/admin/users/{id}/enable` | Administrator role only + CSRF |
+| POST | `/admin/users/{id}/change-role` | Administrator role only + CSRF; cannot demote own account |
 
-All document permissions are evaluated at request time from the database. Unauthorized/missing documents deliberately share a 404 response. Form actions are protected by CSRF tokens. No anonymous sharing links are issued.
+## Permission design notes
+
+- **No implicit access by role.** The administrator role grants access to `/admin` and user-management endpoints only. Admins have no automatic access to documents owned by others; they must be granted access explicitly like any other user.
+- **Server-side enforcement on every request.** There are no client-controlled permission flags. `current_user()` queries the database on every request and checks the `enabled` flag; a disabled user's session stops working on the very next request without any server-side invalidation step.
+- **Denied access is audited.** Every 401 and 404 raised by `access()` or `owner_access()` writes an audit event with `outcome='denied'` before raising the exception.
+- **404 over 403 for documents.** Unauthorized requests to document endpoints return 404, not 403, so an attacker cannot confirm a document's existence from the response code.
+
