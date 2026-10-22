@@ -27,26 +27,6 @@
       </div>
     </div>
 
-    {% if demo_users %}
-    <!-- Quick-access demo login panel -->
-    <div class="demo-panel">
-      <div class="demo-panel-label">⚡ QUICK DEMO LOGIN</div>
-      <p style="font-size:12px;color:var(--text-muted);margin-bottom:14px">Click any role to instantly log in</p>
-      <div class="demo-buttons">
-        {% for u in demo_users %}
-        <button
-          class="demo-btn demo-role-{{ u.role }}"
-          onclick="quickLogin('{{ u.username }}', '{{ u.password }}')"
-          type="button"
-          id="quick-login-{{ u.role }}"
-        >
-          <span class="demo-btn-role">{{ u.role|upper }}</span>
-          <span class="demo-btn-user">{{ u.username }}</span>
-        </button>
-        {% endfor %}
-      </div>
-    </div>
-    {% endif %}
   </div>
 
   <div style="display:flex;flex-direction:column;gap:16px">
@@ -77,19 +57,8 @@
           Access workspace →
         </button>
       </form>
-      <p class="login-hint">
-        No account?
-        <a href="/register" style="color:var(--accent);font-weight:600">Create one here →</a>
-      </p>
+      <p class="login-hint">Accounts are provisioned by an administrator.</p>
     </section>
   </div>
 </div>
-
-<script>
-function quickLogin(username, password) {
-  document.getElementById('username-input').value = username;
-  document.getElementById('password-input').value = password;
-  document.getElementById('login-form').submit();
-}
-</script>
 {% endblock %}

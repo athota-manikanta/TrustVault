@@ -6,7 +6,22 @@ __pycache__/
 .env.*
 !.env.example
 *.db
+*.db-*
+*.sqlite
+*.sqlite-*
 private_storage/
+uploads/
 .coverage
 
 .local-demo-credentials.json
+.credentials/
+credentials/
+secrets/
+credentials*.json
+*credentials*.json
+*.credentials
+*.secret
+*.pem
+*.key
+*.p12
+*.pfx

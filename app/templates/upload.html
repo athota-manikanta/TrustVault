@@ -25,14 +25,14 @@
       <span class="form-hint">Used for filtering in the document library.</span>
 
       <label for="doc-file">File <span style="color:var(--red)">*</span></label>
-      <div class="upload-zone" id="upload-zone" onclick="document.getElementById('doc-file').click()">
+      <label class="upload-zone" id="upload-zone" for="doc-file">
         <div class="upload-icon">
           <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
         </div>
         <strong id="upload-label">Click to select a file</strong>
         <small>PDF, TXT, PNG, JPG, JPEG, DOCX · maximum 8 MB</small>
-        <input id="doc-file" name="file" type="file" accept=".pdf,.txt,.png,.jpg,.jpeg,.docx" required style="display:none" onchange="updateLabel(this)">
-      </div>
+        <input id="doc-file" name="file" type="file" accept=".pdf,.txt,.png,.jpg,.jpeg,.docx" required class="visually-hidden">
+      </label>
 
       <div class="notice" style="margin-top:16px">
         <strong style="color:var(--text);font-size:12px">Validation applied on every upload:</strong>
@@ -55,23 +55,4 @@
   </section>
 </div>
 
-<script>
-function updateLabel(input) {
-  const label = document.getElementById('upload-label');
-  if (input.files && input.files[0]) {
-    label.textContent = input.files[0].name;
-    document.getElementById('upload-zone').style.borderColor = 'var(--accent-dim)';
-  }
-}
-const zone = document.getElementById('upload-zone');
-zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragging'); });
-zone.addEventListener('dragleave', () => zone.classList.remove('dragging'));
-zone.addEventListener('drop', e => {
-  e.preventDefault();
-  zone.classList.remove('dragging');
-  const fi = document.getElementById('doc-file');
-  fi.files = e.dataTransfer.files;
-  updateLabel(fi);
-});
-</script>
 {% endblock %}

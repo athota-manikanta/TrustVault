@@ -13,27 +13,31 @@ from threading import Lock
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError, VerificationError
 from fastapi import FastAPI, Request, Form, UploadFile, File, Depends, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import create_engine, String, Integer, DateTime, ForeignKey, Text, select, or_, event, Boolean
+from sqlalchemy import create_engine, String, Integer, DateTime, ForeignKey, Text, select, or_, event, Boolean, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker, Session
 from starlette.middleware.sessions import SessionMiddleware
+from app.storage import create_storage
 import io
+from urllib.parse import quote
 
 BASE = Path(__file__).resolve().parent.parent
-STORAGE = Path(os.environ.get('TRUSTVAULT_STORAGE', str(BASE / 'private_storage'))).resolve()
-STORAGE.mkdir(parents=True, exist_ok=True)
+os.environ.setdefault('TRUSTVAULT_STORAGE', str(BASE / 'private_storage'))
+blob_storage, STORAGE = create_storage()
 DATABASE_URL = os.environ.get('DATABASE_URL', 'sqlite:///' + str(BASE / 'trustvault.db'))
 if DATABASE_URL.startswith('postgres://'):
     DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql+psycopg://', 1)
 if DATABASE_URL.startswith('postgresql://'):
     DATABASE_URL = DATABASE_URL.replace('postgresql://', 'postgresql+psycopg://', 1)
 SECRET = os.environ.get('TRUSTVAULT_SECRET', '')
+COOKIE_SECURE = os.environ.get('TRUSTVAULT_HTTPS', '0') == '1'
 if not SECRET:
+    if COOKIE_SECURE:
+        raise RuntimeError('TRUSTVAULT_SECRET must be set when TRUSTVAULT_HTTPS=1')
     SECRET = secrets.token_urlsafe(48)
     print('WARNING: using ephemeral secret. Set TRUSTVAULT_SECRET in production.')
-COOKIE_SECURE = os.environ.get('TRUSTVAULT_HTTPS', '0') == '1'
 MAX_FILE = 8 * 1024 * 1024
 ALLOWED = {
     '.pdf': {'application/pdf'},
@@ -172,6 +176,7 @@ async def safe_headers(request, call_next):
     response.headers['Referrer-Policy'] = 'no-referrer'
     response.headers['Content-Security-Policy'] = (
         "default-src 'self'; style-src 'self' https://fonts.googleapis.com; "
+        "style-src-attr 'unsafe-inline'; "
         "font-src 'self' https://fonts.gstatic.com; script-src 'self'; "
         "base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
     )
@@ -217,8 +222,13 @@ def redirect(path):
     return RedirectResponse(path, status_code=303)
 
 
-def audit(session, actor, action, document_id=None, outcome='allowed', detail=''):
-    """Append an HMAC-chained audit event. Transaction-serialised on SQLite."""
+def audit(session, actor, action, document_id=None, outcome='allowed', detail='', *, commit=True):
+    """Append an HMAC-chained audit event in the caller's transaction."""
+    if session.get_bind().dialect.name == 'postgresql':
+        session.execute(
+            text('SELECT pg_advisory_xact_lock(:lock_key)'),
+            {'lock_key': 6084202601},
+        )
     last = session.scalar(select(Audit).order_by(Audit.id.desc()).limit(1))
     prev = last.event_hash if last else '0' * 64
     stamp = datetime.now(timezone.utc)
@@ -229,7 +239,8 @@ def audit(session, actor, action, document_id=None, outcome='allowed', detail=''
         document_id=document_id, outcome=outcome, detail=detail[:200],
         prev_hash=prev, event_hash=digest,
     ))
-    session.commit()
+    if commit:
+        session.commit()
 
 
 def audit_integrity(session) -> bool:
@@ -286,9 +297,6 @@ def page(request, session, name, **kwargs):
 
 
 def _client_ip(request: Request) -> str:
-    forwarded = request.headers.get('X-Forwarded-For')
-    if forwarded:
-        return forwarded.split(',')[0].strip()
     return request.client.host if request.client else '0.0.0.0'
 
 
@@ -423,6 +431,7 @@ async def upload(
     title = title.strip()
     category = category.strip() or 'General'
     filename = Path(file.filename or '').name
+    filename = ''.join(char for char in filename if char >= ' ' and char != '\x7f')
     suffix = Path(filename).suffix.lower()
 
     if not title or len(title) > 150 or len(category) > 60 or not filename or suffix not in ALLOWED:
@@ -449,19 +458,26 @@ async def upload(
 
     key = str(uuid.uuid4())
     doc_id = str(uuid.uuid4())
-    path = STORAGE / key
-    with open(path, 'xb') as fp:
-        fp.write(raw)
+    blob_created = False
+    try:
+        blob_storage.put(key, raw)
+        blob_created = True
 
-    doc = Document(
-        id=doc_id, owner_id=user.id, title=title, category=category,
-        original_name=filename[:180],
-        media_type=next(iter(ALLOWED[suffix])),
-        storage_key=key, size=len(raw),
-    )
-    session.add(doc)
-    session.commit()
-    audit(session, user.id, 'upload', doc_id, 'allowed', filename[:100])
+        doc = Document(
+            id=doc_id, owner_id=user.id, title=title, category=category,
+            original_name=filename[:180],
+            media_type=next(iter(ALLOWED[suffix])),
+            storage_key=key, size=len(raw),
+        )
+        session.add(doc)
+        audit(session, user.id, 'upload', doc_id, 'allowed', filename[:100], commit=False)
+        session.commit()
+    except Exception:
+        session.rollback()
+        if blob_created:
+            blob_storage.delete(key)
+        raise
+
     return redirect('/documents/' + doc_id)
 
 
@@ -489,17 +505,21 @@ def doc_detail(request: Request, doc_id: str, session: Session = Depends(db)):
 @app.get('/documents/{doc_id}/download')
 def download(request: Request, doc_id: str, session: Session = Depends(db)):
     user, doc = access(request, session, doc_id, 'read', 'download')
-    path = STORAGE / doc.storage_key
-    if not path.is_file():
+    try:
+        content = blob_storage.get(doc.storage_key)
+    except ValueError:
+        content = None
+    if content is None:
         audit(session, user.id, 'download', doc_id, 'denied', 'blob missing')
         raise HTTPException(404, 'Stored file unavailable')
     audit(session, user.id, 'download', doc_id)
-    return FileResponse(
-        path,
+    return StreamingResponse(
+        io.BytesIO(content),
         media_type='application/octet-stream',
-        filename=doc.original_name,
-        content_disposition_type='attachment',
-        headers={'Cache-Control': 'no-store'},
+        headers={
+            'Content-Disposition': f"attachment; filename*=UTF-8''{quote(doc.original_name, safe='')}",
+            'Cache-Control': 'no-store',
+        },
     )
 
 
@@ -520,8 +540,8 @@ def edit_document(
     doc.title = title.strip()
     doc.category = category.strip() or 'General'
     doc.updated_at = datetime.now(timezone.utc)
+    audit(session, user.id, 'edit', doc_id, 'allowed', f'title: {old_title!r} → {doc.title!r}', commit=False)
     session.commit()
-    audit(session, user.id, 'edit', doc_id, 'allowed', f'title: {old_title!r} → {doc.title!r}')
     return redirect('/documents/' + doc_id)
 
 
@@ -545,8 +565,8 @@ def grant(
         existing.permission = permission
     else:
         session.add(Grant(document_id=doc_id, user_id=target.id, permission=permission))
+    audit(session, user.id, 'grant', doc_id, 'allowed', f'{target.username}:{permission}', commit=False)
     session.commit()
-    audit(session, user.id, 'grant', doc_id, 'allowed', f'{target.username}:{permission}')
     return redirect('/documents/' + doc_id)
 
 
@@ -564,8 +584,11 @@ def revoke(
     if existing:
         revoked_username = session.scalar(select(User.username).where(User.id == target_id)) or f'uid:{target_id}'
         session.delete(existing)
-        session.commit()
-        audit(session, user.id, 'revoke', doc_id, 'allowed', f'user:{revoked_username}')
+        detail = f'user:{revoked_username}'
+    else:
+        detail = f'user:{target_id}; no active grant'
+    audit(session, user.id, 'revoke', doc_id, 'allowed', detail, commit=False)
+    session.commit()
     return redirect('/documents/' + doc_id)
 
 
@@ -573,14 +596,13 @@ def revoke(
 def delete_document(request: Request, doc_id: str, csrf: str = Form(...), session: Session = Depends(db)):
     csrf_check(request, csrf)
     user, doc = owner_access(request, session, doc_id, 'delete')
-    blob = STORAGE / doc.storage_key
     title = doc.title
     for grant_row in session.scalars(select(Grant).where(Grant.document_id == doc_id)).all():
         session.delete(grant_row)
     session.delete(doc)
+    audit(session, user.id, 'delete', doc_id, 'allowed', title, commit=False)
     session.commit()
-    audit(session, user.id, 'delete', doc_id, 'allowed', title)
-    blob.unlink(missing_ok=True)
+    blob_storage.delete(doc.storage_key)
     return redirect('/')
 
 
@@ -697,8 +719,8 @@ def disable_user(request: Request, target_id: int, csrf: str = Form(...), sessio
     if target.id == user.id:
         raise HTTPException(400, 'Cannot disable your own account')
     target.enabled = 0
+    audit(session, user.id, 'user_disable', None, 'allowed', f'user:{target.username}', commit=False)
     session.commit()
-    audit(session, user.id, 'user_disable', None, 'allowed', f'user:{target.username}')
     return redirect('/admin/users')
 
 
@@ -714,8 +736,8 @@ def enable_user(request: Request, target_id: int, csrf: str = Form(...), session
     if not target:
         raise HTTPException(404)
     target.enabled = 1
+    audit(session, user.id, 'user_enable', None, 'allowed', f'user:{target.username}', commit=False)
     session.commit()
-    audit(session, user.id, 'user_enable', None, 'allowed', f'user:{target.username}')
     return redirect('/admin/users')
 
 
@@ -750,8 +772,8 @@ def create_user(
 
     new_user = User(username=username, role=role, password_hash=PH.hash(password))
     session.add(new_user)
+    audit(session, user.id, 'user_create', None, 'allowed', f'user:{username} role:{role}', commit=False)
     session.commit()
-    audit(session, user.id, 'user_create', None, 'allowed', f'user:{username} role:{role}')
     return redirect('/admin/users')
 
 
@@ -778,6 +800,6 @@ def change_role(
         raise HTTPException(400, 'Cannot demote your own admin account')
     old_role = target.role
     target.role = role
+    audit(session, user.id, 'role_change', None, 'allowed', f'user:{target.username} {old_role}→{role}', commit=False)
     session.commit()
-    audit(session, user.id, 'role_change', None, 'allowed', f'user:{target.username} {old_role}→{role}')
     return redirect('/admin/users')

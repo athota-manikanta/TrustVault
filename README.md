@@ -9,6 +9,7 @@ A responsive FastAPI application for individually authorized document access, im
 - Private opaque file storage, without static-file routes; download checks authorization on each request.
 - Owner deletes, audit of allowed and denied document operations, admin activity dashboard and keyed hash-chain integrity indicator.
 - CSRF tokens for write forms, session cookies, restrictive security headers, file extension/signature and size checks.
+- Mutations and their success audit events share one database transaction; PostgreSQL audit appends are serialized with a transaction-scoped advisory lock.
 - The **administrator does not automatically read other owners' documents**. Admins monitor activity and may own their own files.
 
 ## Setup (Windows Command Prompt)
@@ -36,13 +37,26 @@ python -m pytest -q
 Tests are isolated in a temporary SQLite DB and private file directory. They do not operate on your local project data.
 
 ## Deployment
-- Use a Python host with persistent PostgreSQL and **persistent private storage** (a non-public persistent volume or properly permissioned object storage adapter). Many free application filesystems are ephemeral; this project needs persistent blobs for dependable deployment.
-- Configure `DATABASE_URL`, `TRUSTVAULT_SECRET`, `TRUSTVAULT_STORAGE` and `TRUSTVAULT_HTTPS=1`. Ensure the reverse proxy enforces TLS. Do not expose `TRUSTVAULT_STORAGE` as static content.
+- Netlify static hosting does not run this FastAPI application or provide its persistent database/blob requirements. The supplied Netlify URL was protected by Netlify Team access, described below.
+- `render.yaml` describes a Render Free FastAPI web service. The same application serves the Jinja2 pages and API. The Render filesystem is ephemeral, so production database and document bytes are external: Neon PostgreSQL and a private Supabase Storage bucket.
+- The Blueprint intentionally has no Render-managed database. Create a Neon project and copy its **pooled** PostgreSQL connection string into Render's `DATABASE_URL`; retain the supplied `sslmode=require` parameter. The pooled connection string is suitable for the app's synchronous SQLAlchemy/psycopg driver.
+- Create a Supabase Storage bucket named `trustvault-documents` (or set the chosen name in `SUPABASE_STORAGE_BUCKET`) and keep it **private**. Configure `SUPABASE_URL`, `SUPABASE_STORAGE_BUCKET`, and the server-only Supabase `sb_secret_...` key as `SUPABASE_SECRET_KEY` in Render's secret environment settings. This key is sent only in the `apikey` header (not as a JWT bearer token). Do not put it in frontend variables or source control.
+- Supabase objects are read/written/deleted only by FastAPI using authenticated server-side Storage API requests. The application never generates public or signed URLs. Every download first re-checks the active user and current document grant, then retrieves bytes through the server; revoked grants are denied on the next request.
+- **Step-by-step setup:**
+  1. Review the repository and push it to a GitHub repository you control only when you are ready to authorize Render to deploy it.
+  2. In Neon, create a project/database. In the Console choose **Connect**, select the database and role, enable pooling, and copy the connection string. Keep `sslmode=require`; store the value as `DATABASE_URL` only in Render.
+  3. In Supabase, create a project and a Storage bucket with public access disabled. Copy the project URL and create/copy a server-only secret API key (`sb_secret_...`) from **Settings → API Keys**. Never use this privileged key in browser code.
+  4. In Render, choose **New → Blueprint**, connect the repository, and select `render.yaml`. Set the prompted `DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, and `SUPABASE_STORAGE_BUCKET` values. Set four distinct `SEED_*_PASSWORD` values (at least 12 characters) for the demo accounts. Render generates `TRUSTVAULT_SECRET`; retain `TRUSTVAULT_HTTPS=1`.
+  5. Deploy the Blueprint and wait for the `/health` check to pass. The free web service may sleep when idle and its local filesystem is temporary; Neon and Supabase own persistent state. Review current provider quotas, suspension/retention policies, and free-tier limits before relying on the services.
+  6. From the Render service shell, run `python -m scripts.seed` once. It creates demo users and a harmless sample document in the configured database and private bucket. Do not rerun with different passwords expecting existing passwords to change; reset users explicitly if needed.
+  7. Test the public HTTPS URL in a private browser session: log in as owner, upload a harmless document, grant viewer read access, download as viewer, revoke access, then confirm the same viewer session receives 404 on the next detail/download request. Confirm the object is not publicly downloadable, and confirm data remains after a service restart.
+- The deployment instructions and Blueprint are configuration only: no service, bucket, DNS record, or credential was created during this work. The live application is not verified until those steps and the acceptance checks have actually been performed.
+- **Observed deployment status:** On 2026-10-22, `GET /`, `GET /health`, and `GET /login` at `https://trustvaultz.netlify.app/` returned HTTP 401 from Netlify Team protection. The live application and backend could not be inspected or authenticated, so no claim is made that the complete backend is deployed or working there.
+- Configure the Blueprint's `sync: false` Neon, Supabase, and seed-password values in the Render dashboard before starting the service. `TRUSTVAULT_SECRET` is generated by Render. HTTPS mode fails startup without a secret. Never make the bucket public.
 - Install dependencies: `pip install -r requirements.txt`.
-- Seed accounts exactly once using `python -m scripts.seed` with the four passwords configured as private environment variables.
-- Start: `uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}` (Unix shell). On Windows: `python -m uvicorn app.main:app`.
-- On production, route all public requests through HTTPS and consider an external immutable audit sink; see THREATS.md.
-- Open the live site using an incognito window; test a non-authorized ID and revoked access on the public deployment itself.
+- Start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT` (Render supplies `PORT`). On Windows local development: `python -m uvicorn app.main:app`.
+- On production, route all public requests through HTTPS and send audit events to an external append-only sink. The login limiter uses the direct peer address and deliberately ignores `X-Forwarded-For`; only configure trusted proxy handling when the proxy source IPs are explicitly restricted.
+- Verify the deployed backend with an incognito session, role-specific credentials, persistence across restart, and a non-authorized ID and revoked grant. Deployment was not performed as part of this work.
 
 ## Permission model
 Owner: CRUD on their own documents; grant/revoke access. Editor: view, download, edit metadata of a named document. Viewer: view and download an explicitly granted document. Administrator: admin log/dashboard and ability to own their own documents; **not** automatic access to documents belonging to others. Every data route independently calls a server authorization helper, including downloads.
@@ -51,9 +65,9 @@ Owner: CRUD on their own documents; grant/revoke access. Editor: view, download,
 - Metadata edits supported; replacing file content / versioning not implemented.
 - Date filtering is a *starting date* filter. No PDF text search.
 - JWT/share links deliberately omitted. This eliminates persistent bearer download URLs; existing sessions still require fresh permission checks.
-- Database auditing is keyed tamper-evident **only**, not immutable against an administrator with database and secret access. Prefer remote append-only logging in production.
-- Concurrent transactions on multi-worker PostgreSQL need stronger chain serialization (advisory locking/outbox) to ensure strict hash-chain order.
-- No user self-registration, password reset, account disabling UI, rate limiting, virus scanning, quotas, or object storage integration. Add these before use with real confidential data.
+- Database auditing is keyed tamper-evident **only**, not immutable. Someone able to alter the database can remove the tail of the chain without detection; someone with the database and application secret can rewrite valid hashes. Prefer remote append-only logging with external checkpoints in production.
+- PostgreSQL audit appends use a transaction-scoped advisory lock, but a live PostgreSQL multi-worker integration test has not been run. SQLite WAL is intended for local/single-process use, not concurrent multi-process production.
+- No user self-registration, password reset, virus scanning, or quotas. Supabase Storage is implemented, but no live provider/bucket integration has been configured or tested. The login limiter is in-memory/per-process; use a shared service or edge control for multi-worker production.
 - Minimal format checks do not certify uploaded files as malware-free. Only use harmless test documents.
 - No hosted live link or genuine multi-day commits are included in a ZIP. These must be produced by the candidate.
 
@@ -87,7 +101,7 @@ Unzip the project, open the inner `trustvault_project` folder, and double-click 
 - `REQUIREMENTS_CHECKLIST.md` — crosswalk to the ten official requirements.
 - `API_ACCESS.md` — endpoint-by-endpoint permissions.
 - `THREATS.md` — full threat model with mitigations and residual risks.
-- `PROMPTS.md` — AI-assistance journal documenting corrections made to AI-generated code.
+- `PROMPTS.md` — existing AI-assistance journal; its historical entries have not been independently verified during this change.
 - `tests/test_extended.py` — extra authorization, admin, search and upload-validation cases.
 - Workspace search includes a date-to filter, and the activity center shows actor names and denied-attempt counts.
 

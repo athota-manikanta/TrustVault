@@ -1,7 +1,7 @@
 """Create demo accounts (change passwords before exposing a public deployment)."""
 import os
 from sqlalchemy import select
-from app.main import SessionLocal, User, PH, Document, Grant, STORAGE, audit
+from app.main import SessionLocal, User, PH, Document, Grant, blob_storage, audit
 import uuid
 
 accounts = [
@@ -30,7 +30,7 @@ with SessionLocal() as db:
     if not existing:
         doc_id, key = str(uuid.uuid4()), str(uuid.uuid4())
         content = b'TrustVault sample file\nThis is non-confidential demonstration content.\n'
-        (STORAGE / key).write_bytes(content)
+        blob_storage.put(key, content)
         db.add(Document(id=doc_id, owner_id=owner.id, title='Welcome to TrustVault',
             category='Getting Started', original_name='welcome.txt', media_type='text/plain',
             storage_key=key, size=len(content)))

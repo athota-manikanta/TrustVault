@@ -14,7 +14,7 @@ def env_app(monkeypatch):
     import sys
     # Force fresh import of app.main so DB / config is re-read each test.
     for key in list(sys.modules):
-        if key == 'app.main':
+        if key in {'app.main', 'app.storage'}:
             sys.modules.pop(key)
 
     with tempfile.TemporaryDirectory() as t:

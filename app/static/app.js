@@ -42,5 +42,30 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.textContent = 'Uploading…';
       }
     });
+
+    const zone = document.getElementById('upload-zone');
+    const fileInput = document.getElementById('doc-file');
+    const label = document.getElementById('upload-label');
+    const updateLabel = () => {
+      if (fileInput.files && fileInput.files[0]) {
+        label.textContent = fileInput.files[0].name;
+        zone.classList.add('has-file');
+      }
+    };
+
+    fileInput.addEventListener('change', updateLabel);
+    zone.addEventListener('dragover', event => {
+      event.preventDefault();
+      zone.classList.add('dragging');
+    });
+    zone.addEventListener('dragleave', () => zone.classList.remove('dragging'));
+    zone.addEventListener('drop', event => {
+      event.preventDefault();
+      zone.classList.remove('dragging');
+      if (event.dataTransfer.files.length) {
+        fileInput.files = event.dataTransfer.files;
+        updateLabel();
+      }
+    });
   }
 });

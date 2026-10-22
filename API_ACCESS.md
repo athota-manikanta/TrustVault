@@ -4,7 +4,7 @@
 |---|---|---|
 | GET | `/health` | Public |
 | GET | `/login` | Public |
-| POST | `/login` | CSRF token and correct credentials; rate-limited per IP |
+| POST | `/login` | CSRF token and correct credentials; rate-limited by direct peer address (untrusted forwarding headers ignored) |
 | POST | `/logout` | Valid CSRF token |
 | GET | `/` | Logged-in; only documents the caller is authorized to see |
 | GET | `/documents/new` | Owner or admin role |
@@ -28,4 +28,6 @@
 - **Server-side enforcement on every request.** There are no client-controlled permission flags. `current_user()` queries the database on every request and checks the `enabled` flag; a disabled user's session stops working on the very next request without any server-side invalidation step.
 - **Denied access is audited.** Every 401 and 404 raised by `access()` or `owner_access()` writes an audit event with `outcome='denied'` before raising the exception.
 - **404 over 403 for documents.** Unauthorized requests to document endpoints return 404, not 403, so an attacker cannot confirm a document's existence from the response code.
-
+- **Mutation/audit atomicity.** Upload, edit, grant, revoke, delete and admin user changes write their success audit row in the same database transaction as the corresponding mutation. An audit write or commit failure rolls the mutation back.
+- **Audit limitations.** The HMAC chain detects edited fields and broken links, not removal of its final events; the database and application secret are not an immutable external archive. PostgreSQL appends are serialized with a transaction-scoped advisory lock. SQLite is intended for local/single-process use.
+- **Cookie and proxy behavior.** Session cookies are HTTP-only and SameSite=Strict. Set `TRUSTVAULT_HTTPS=1` behind correctly configured TLS to enable Secure cookies; arbitrary `X-Forwarded-For` values are not trusted.

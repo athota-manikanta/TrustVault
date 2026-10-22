@@ -2,7 +2,7 @@
 
 ## What I built
 
-TrustVault is a server-rendered FastAPI application for sharing confidential documents with individually-named access grants and a tamper-evident audit trail. The core idea is that every document access decision — including access denials — is enforced server-side on every request, and every one of those decisions is recorded in an HMAC-keyed hash chain that can be verified for tampering.
+TrustVault is a server-rendered FastAPI application for sharing documents with individually-named access grants and a tamper-evident audit trail. Document access is enforced server-side on every request. Allowed and denied activity is recorded in an HMAC-keyed hash chain; edited fields and broken links can be detected, but the database is not an immutable audit archive.
 
 The stack: **Python / FastAPI**, **SQLAlchemy 2.x**, **SQLite** (WAL mode), **Jinja2 templates**, **Argon2** password hashing, **Starlette** sessions. No JavaScript frameworks; no client-side routing. This choice was deliberate — the security model lives entirely on the server, so a server-rendered design is the natural fit and eliminates a whole class of token-storage and SPA auth risks.
 
@@ -24,6 +24,8 @@ Every document endpoint calls `access()` or `owner_access()` as the first substa
 2. Check whether the document exists and whether the user is authorized (owner, or has a matching row in the `grants` table).
 3. Write an audit event with `outcome='denied'` before raising any HTTP exception.
 
+Successful document and user mutations append their success audit event in the same database transaction. A database/audit failure rolls the mutation back. PostgreSQL uses a transaction-scoped advisory lock to serialize audit-chain appends.
+
 Unauthorized document requests return **404**, not 403, so an attacker cannot confirm a document's existence from the response code.
 
 ---
@@ -36,7 +38,7 @@ Unauthorized document requests return **404**, not 403, so an attacker cannot co
 | Password reset / email | No email transport in scope; admins reset access by creating new accounts |
 | File versioning | Not required; noted in README and THREATS.md |
 | Antivirus scanning | Magic bytes + extension allowlist is the stated validation check; full AV would need a sidecar service and is explicitly flagged as a residual risk in T7 |
-| Object storage (S3/GCS) | Design supports it via `TRUSTVAULT_STORAGE` env var; adapter not implemented |
+| Live object storage (Supabase Storage) | Private-storage adapter implemented; no live provider or bucket configured/tested |
 | Share links with expiry | Bearer links are a known risk for document systems; the problem statement does not require them and omitting them eliminates T3-class attacks |
 | Groups / folder inheritance | Per-document named-user grants are simpler to reason about and audit. Groups add complexity and confusion about who has access. |
 | JWT / bearer tokens | Eliminated persistent tokens that could be replayed after revocation |
@@ -62,9 +64,9 @@ The AI also produced a correct-looking but subtly broken audit chain (Entry 3: t
 
 - **No MFA.** A password-only system is the stated scope but is insufficient for truly sensitive data.
 - **In-memory rate limiter.** It resets on process restart and does not work across multiple workers. Production needs Redis or a WAF-level solution. Documented as T12.
-- **Audit chain is HMAC-keyed, not immutable.** An attacker who has both the database and the application secret can recompute valid hashes. An external append-only sink (AWS CloudTrail, Azure Monitor) is needed in production. Documented as T11.
+- **Audit chain is not immutable.** Removing the last records cannot be detected without an externally stored checkpoint. An attacker with both the database and application secret can recompute valid hashes. An external append-only sink and independently stored checkpoints are needed in production. Documented as T11.
 - **No file versioning.** Metadata edits are supported; replacing file content is not.
-- **SQLite only.** PostgreSQL is supported via `DATABASE_URL` but the multi-worker audit chain race (T25) is not resolved for that deployment scenario.
+- **SQLite for local use.** PostgreSQL is supported via `DATABASE_URL`; appends use a transaction advisory lock, but production multi-worker PostgreSQL behavior has not been integration-tested (T25).
 - **No antivirus.** Magic bytes + extension allowlist is the implemented check. Documented as T7.
 
 ---
@@ -75,4 +77,4 @@ The AI also produced a correct-looking but subtly broken audit chain (Entry 3: t
 2. Add a Redis-backed rate limiter and session store.
 3. Implement an external audit sink (write events to an append-only log service alongside the database chain).
 4. Add group-based grants as an optional extension to per-document named grants.
-5. Resolve the multi-worker audit chain race with a PostgreSQL advisory lock or outbox table.
+5. Run live multi-worker PostgreSQL tests and configure an independently stored audit checkpoint.
