@@ -20,7 +20,7 @@ This file documents every significant interaction with AI tools during the devel
 - Removed `'unsafe-inline'` from CSP; the app uses no inline scripts (drag-and-drop logic was moved to an external `app.js` file).
 - Implemented an in-memory sliding-window rate limiter (`_rate_check`, `_rate_reset`) with a 10-attempt/5-minute window and a 15-minute block.
 
-**Commit:** Initial implementation with corrections applied before first commit.
+**Commit:** `0cf2af0` (Initialize TrustVault application) — HMAC correction, CSP fix, and rate limiter are all present in the initial commit because these were caught and fixed during code review before the first push. The rate limiter placement specifically (`_rate_check` before any DB access) can be verified at `app/main.py` in `login()`.
 
 ---
 
@@ -48,6 +48,8 @@ More importantly, I verified that the function is called with the correct `level
 
 **What I did instead:** Rewrote using SQLAlchemy 2.x `select()`, simplified the read-check expression, and added the trace above to confirm all call sites pass the correct level. The test `test_read_grant_cannot_edit_metadata` verifies this at runtime.
 
+**Commit:** `0cf2af0` — `authorized()` at line 252 of `app/main.py` uses `select()` throughout. The call-site trace is documented above; the test `test_read_grant_cannot_edit_metadata` in `tests/test_threats.py` provides runtime verification.
+
 ---
 
 ## Entry 3 — 2026-10-21 — Audit log integrity: hash chain design
@@ -68,6 +70,8 @@ The AI was confident the chain was correct. It was not. The timezone bug would c
 - Documented the multi-worker race in THREATS.md (T25) as a known accepted risk for the current SQLite single-worker deployment, with a note that an advisory lock or outbox pattern is needed for PostgreSQL.
 - Enabled SQLite WAL mode (`PRAGMA journal_mode=WAL`) to reduce write contention in single-worker scenarios.
 
+**Commit:** `0cf2af0` — timezone fix at `audit_integrity()` (line 235 of `app/main.py`); WAL mode at the SQLite `connect` event listener (line 143). T25 in `THREATS.md` documents the accepted race risk.
+
 ---
 
 ## Entry 4 — 2026-10-21 — Rate limiting implementation
@@ -82,6 +86,8 @@ The AI was confident the chain was correct. It was not. The timezone bug would c
 3. The rate limiter was per-process in-memory. The AI did not mention this limitation. Documented in THREATS.md (T12).
 
 **What I did instead:** Moved `_rate_check(ip)` to be the first thing called in the `login()` route handler, before any DB access. Added `_rate_reset(ip)` on successful login.
+
+**Commit:** `0cf2af0` — `_rate_check` is the first call inside `login()` (before the `session.scalar` user lookup). `_rate_reset` is called on the success path. Test: `test_rate_limiter_blocks_excessive_attempts` in `tests/test_threats.py`.
 
 ---
 
@@ -98,6 +104,8 @@ The test `test_admin_cannot_read_owner_document` and `test_admin_cannot_grant_ac
 
 **What I did instead:** Left `authorized()` unchanged — it only checks ownership or named grants. The admin role is checked only in the `/admin` and `/admin/users*` route handlers. I manually verified that no document route has an `if admin` bypass. The test suite confirms this.
 
+**Commit:** `0cf2af0` — `authorized()` at line 252 of `app/main.py` has no role-based shortcut. The admin panel routes check `user.role != 'admin'` in isolation. Tests `test_admin_cannot_read_owner_document` and `test_admin_cannot_grant_access_to_others_doc` in `tests/test_threats.py` verify this.
+
 ---
 
 ## Entry 6 — 2026-10-21 — User management endpoints
@@ -110,6 +118,8 @@ The test `test_admin_cannot_read_owner_document` and `test_admin_cannot_grant_ac
 Caching the `enabled` flag in the session cookie defeats the requirement that *"taking access away works immediately"*. If the flag is cached in the cookie, a disabled user whose cookie hasn't expired can continue to access the system for up to one hour. This directly contradicts requirement #3 of the problem statement.
 
 **What I did instead:** `current_user()` fetches the user from the database on every request and checks `user.enabled`. The DB query is fast (primary key lookup). Session cookies store only the user ID. The test `test_disabled_user_active_session_denied` verifies that disabling a user mid-session takes effect on the very next request.
+
+**Commit:** `0cf2af0` — `current_user()` at line 193 of `app/main.py` returns `None` if `user.enabled` is falsy, checked on every request. Session stores only `uid` (an integer). Test: `test_disabled_user_active_session_denied` in `tests/test_threats.py`.
 
 ---
 
