@@ -82,11 +82,12 @@ Owner: CRUD on their own documents; grant/revoke access. Editor: view, download,
 Unzip the project, open the inner `trustvault_project` folder, and double-click `start_windows.bat`. It creates a virtual environment, installs dependencies, creates random local-only passwords, prints the four usernames/passwords, and starts the web app at `http://127.0.0.1:8000`. Keep the black window open while using the site. On later starts the same local passwords will be reused. The local credentials file (`.local-demo-credentials.json`) is excluded from Git; never upload it or use these demo credentials in a public deployment. If a database already exists but the credential file does not, the launcher stops to prevent an accidental mismatch. An internet connection is needed on first installation.
 
 
-## Interview-ready additions
+## Additional documentation
 
-- `INTERVIEW_GUIDE.md` — honest 60-second explanation, five-minute live demo sequence and security Q&A.
-- `REQUIREMENTS_CHECKLIST.md` — crosswalk to the ten official requirements and outstanding submission items.
+- `REQUIREMENTS_CHECKLIST.md` — crosswalk to the ten official requirements.
 - `API_ACCESS.md` — endpoint-by-endpoint permissions.
+- `THREATS.md` — full threat model with mitigations and residual risks.
+- `PROMPTS.md` — AI-assistance journal documenting corrections made to AI-generated code.
 - `tests/test_extended.py` — extra authorization, admin, search and upload-validation cases.
 - Workspace search includes a date-to filter, and the activity center shows actor names and denied-attempt counts.
 
