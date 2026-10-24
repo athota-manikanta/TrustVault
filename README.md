@@ -1,6 +1,6 @@
 # TrustVault — Secure Document Sharing & Audit System
 
-A responsive FastAPI application for individually authorized document access, immediate grant revocation and audited activity. Built as an AI-assisted starting implementation for the Snovasys Fresher Hiring Challenge. **You must personally review, test, document, and deploy your own submission.**
+TrustVault is a server-rendered FastAPI application for individually authorized document sharing and audited activity, developed for the Snovasys Fresher Hiring Challenge 2026. It includes named-user permissions, private document-storage integration, an administrator activity dashboard, and automated security tests. Deployment and provider-specific behavior remain subject to the verification limits documented below.
 
 ## Functionality
 - Four seed accounts covering administrator, owner and viewers, with hashed passwords, plus a harmless sample document shared with the demonstration viewer.

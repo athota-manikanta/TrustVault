@@ -4,7 +4,7 @@
 
 TrustVault is a server-rendered FastAPI application for sharing documents with individually-named access grants and a tamper-evident audit trail. Document access is enforced server-side on every request. Allowed and denied activity is recorded in an HMAC-keyed hash chain; edited fields and broken links can be detected, but the database is not an immutable audit archive.
 
-The stack: **Python / FastAPI**, **SQLAlchemy 2.x**, **SQLite** with WAL mode for local development and tests, **Jinja2 templates**, **Argon2** password hashing, and **Starlette** sessions. PostgreSQL is supported for the hosted architecture. No JavaScript frameworks or client-side routing are used; authorization decisions remain server-side.
+The stack: **Python / FastAPI**, **SQLAlchemy 2.x**, **SQLite** with WAL mode for local development and tests, **Jinja2 templates**, **Argon2** password hashing, and **Starlette** sessions. PostgreSQL is configured for the hosted architecture, and a Supabase Storage adapter is implemented for private document objects. Provider integration, PostgreSQL behavior, and persistence have not been independently verified end to end. No JavaScript frameworks or client-side routing are used; authorization decisions remain server-side.
 
 ---
 
@@ -38,25 +38,18 @@ Unauthorized document requests return **404**, not 403, so an attacker cannot co
 | Password reset / email | No email transport in scope; admins reset access by creating new accounts |
 | File versioning | Not required; noted in README and THREATS.md |
 | Antivirus scanning | Magic bytes + extension allowlist is the stated validation check; full AV would need a sidecar service and is explicitly flagged as a residual risk in T7 |
-| Provider-backed object storage | A Supabase Storage adapter and private-bucket preflight are implemented; real provider access and persistence were not exercised by the automated tests or independently verified in this audit |
+| Provider-backed object storage | Not omitted: a Supabase Storage adapter and private-bucket preflight are implemented. Real provider access and persistence were not exercised by the automated tests or independently verified in this audit. |
 | Share links with expiry | Bearer links are a known risk for document systems; the problem statement does not require them and omitting them eliminates T3-class attacks |
 | Groups / folder inheritance | Per-document named-user grants are simpler to reason about and audit. Groups add complexity and confusion about who has access. |
 | JWT / bearer tokens | Eliminated persistent tokens that could be replayed after revocation |
 
 ---
 
-## How I used AI
+## AI-assisted development and evidence
 
-I used an AI assistant throughout the build. My workflow:
+AI tools were used during development, but original prompt transcripts are not preserved in this repository. `PROMPTS.md` distinguishes implementation details that can be checked against code, tests, and commits from recollections of AI interactions that lack independent records. In particular, the historical claims in Entries 1, 4, 5, and 6 and the original interaction dates for Entries 2 and 3 remain unverified and require the author's confirmation. The journal does not claim that all entries have independently verified evidence or that it satisfies a required number of documented AI interactions.
 
-1. Prepend a security-focused system prompt to every session that required the AI to reason about attacker goals before suggesting any authorisation change.
-2. Ask for a feature or component.
-3. Read the output, trace every call site, and check it against the requirements.
-4. Correct anything wrong before committing.
-
-This approach produced working code quickly, but it did not eliminate errors — particularly in security-sensitive areas. Detailed examples of what went wrong and how I corrected it are in `PROMPTS.md`. The most significant failure was Entry 5: the AI suggested adding `if user.role == 'admin': return True` inside the `authorized()` function, which would have given admins automatic access to all documents — directly violating the core requirement. I rejected it entirely.
-
-The AI also produced a correct-looking but subtly broken audit chain (Entry 3: timezone naive vs aware datetime mismatch causing the integrity check to always return `False`), placed the rate-limiter check after the database query instead of before it (Entry 4), and used the deprecated `session.query()` API (Entry 2). In each case the fix required understanding the requirement, not just reading the code.
+The repository does support specific implementation facts, including the current owner/grant authorization checks, read-versus-edit tests, audit-chain timezone handling, and PostgreSQL advisory-lock commit attribution. These facts do not prove what an AI suggested or when. Any account of AI mistakes or corrections should be treated as personal recollection unless supported by authentic records.
 
 ---
 
