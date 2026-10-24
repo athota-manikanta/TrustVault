@@ -21,6 +21,40 @@ def test_cross_user_denied_and_audited(env_app):
         denied=s.scalars(select(m.Audit).where(m.Audit.document_id==did,m.Audit.outcome=='denied')).all()
         assert len(denied)>=2
 
+
+def test_overlength_document_id_is_denied_and_audited_under_postgres_column_limit(env_app, monkeypatch):
+    m, client = env_app
+    owner_token = login(client, 'owner')
+    invalid_id = 'x' * 37
+    original_audit = m.audit
+
+    def enforce_postgres_varchar_limit(session, actor, action, document_id=None, outcome='allowed', detail='', *, commit=True):
+        if document_id is not None and len(document_id) > 36:
+            raise ValueError('simulated PostgreSQL varchar(36) constraint failure')
+        return original_audit(
+            session, actor, action, document_id, outcome, detail, commit=commit,
+        )
+
+    monkeypatch.setattr(m, 'audit', enforce_postgres_varchar_limit)
+
+    response = client.get(f'/documents/{invalid_id}')
+    assert response.status_code == 404
+    client.post('/logout', data={'csrf': owner_token})
+    anonymous_response = client.get(f'/documents/{invalid_id}')
+    assert anonymous_response.status_code == 401
+
+    with m.SessionLocal() as session:
+        denials = session.scalars(
+            select(m.Audit).where(
+                m.Audit.action == 'view',
+                m.Audit.outcome == 'denied',
+                m.Audit.detail.like('%invalid document identifier'),
+            )
+        ).all()
+        assert len(denials) == 2
+        assert all(denial.document_id is None for denial in denials)
+
+
 def test_grant_and_revocation_immediate(env_app):
     m, client=env_app
     t=login(client,'owner');did=upload(client,t)

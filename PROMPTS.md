@@ -1,132 +1,61 @@
 # PROMPTS.md — AI assistance journal
 
-This file documents every significant interaction with AI tools during the development of TrustVault. Each entry records: what was asked, what the AI produced, what was wrong or needed fixing, and how it was corrected.
+This journal distinguishes repository-verifiable implementation details from recollections of AI interactions. The repository does not contain the original prompt transcripts. Unless an entry says otherwise, its account of what an AI suggested is author-reported and has not been independently corroborated. This document does not establish that the project satisfies any required count of genuine AI-development entries.
 
 ---
 
-## Entry 1 — 2026-10-21 — Initial scaffold
+## Entry 1 — Initial scaffold account
 
-**What I asked:** "Build a secure document-sharing platform in FastAPI. It needs: three roles (admin, owner, viewer), per-document read/edit grants, audit logs, CSRF protection, and server-side access checks on every route."
-
-**What the AI produced:** A working FastAPI application with SQLAlchemy models, Argon2 password hashing, a hash-chain audit log, CSRF middleware, and server-rendered Jinja2 templates. The structure was sound.
-
-**What was wrong:**
-1. The audit `hmac.new()` call was missing — it was written as `hmac.new(SECRET.encode(), ...)` but `hmac.new` is not the correct Python API. The correct call is `hmac.new(SECRET.encode(), msg.encode(), hashlib.sha256)`.
-2. The `Content-Security-Policy` header allowed `'unsafe-inline'` scripts, which would defeat XSS protection.
-3. The rate limiter was completely absent despite "brute-force login" being in THREATS.md as an unmitigated risk.
-
-**What I did instead:**
-- Corrected the HMAC call and verified it with the `test_audit_tampering_detected` test.
-- Removed `'unsafe-inline'` from CSP; the app uses no inline scripts (drag-and-drop logic was moved to an external `app.js` file).
-- Implemented an in-memory sliding-window rate limiter (`_rate_check`, `_rate_reset`) with a 10-attempt/5-minute window and a 15-minute block.
-
-**Commit:** `0cf2af0` (Initialize TrustVault application) — HMAC correction, CSP fix, and rate limiter are all present in the initial commit because these were caught and fixed during code review before the first push. The rate limiter placement specifically (`_rate_check` before any DB access) can be verified at `app/main.py` in `login()`.
+**Evidence status:** The prior draft described an initial AI scaffold and subsequent HMAC, Content Security Policy (CSP), and login rate-limiter corrections. The code and tests can show the current implementation, but do not establish that an AI produced the scaffold or made those specific mistakes. The original interaction and its date require the author's confirmation. This is not presented as verified AI-development evidence.
 
 ---
 
-## Entry 2 — 2026-10-21 — Access control: the `authorized()` function
+## Entry 2 — Authorization helper and SQLAlchemy API
 
-**What I asked:** "Write a Python function that checks whether a user has at least `read` or `edit` access to a document. The owner always has full access. Others need a matching row in the `grants` table."
+**Evidence status:** The code supports the implementation facts below. The original AI interaction and its date are not independently documented in this repository.
 
-**What the AI produced:**
-```python
-def authorized(session, doc, user, level='read'):
-    if doc.owner_id == user.id: return True
-    grants = session.query(Grant).filter_by(document_id=doc.id, user_id=user.id).all()
-    if level == 'read':
-        return any(g.permission in ('read', 'edit') for g in grants)
-    return any(g.permission == 'edit' for g in grants)
-```
+The earlier draft incorrectly characterized the read/edit permission logic as a semantic security bug, then acknowledged that the logic was correct. That characterization is withdrawn. The supported improvement is modernization from the legacy `session.query()` pattern to SQLAlchemy's `select()` API, together with review of the authorization helper's route call sites.
 
-**What was wrong:**
-The logic has a subtle semantic error: it checks `g.permission in ('read', 'edit')` for read, but it also returns `True` for an edit-level check only when `g.permission == 'edit'`. This is correct in isolation, but the AI used `session.query()` (legacy SQLAlchemy 1.x style) rather than `select()` (2.x style), which is inconsistent with the rest of the codebase and will eventually emit deprecation warnings.
-
-More importantly, I verified that the function is called with the correct `level` argument at every route. The AI did not check this — it only wrote the function. I manually traced every call site:
-- `download()` → `access(..., 'read', 'download')` ✓
-- `edit_document()` → `access(..., 'edit', 'edit')` ✓  
-- `doc_detail()` → `access(..., 'read', 'view')` ✓
-
-**What I did instead:** Rewrote using SQLAlchemy 2.x `select()`, simplified the read-check expression, and added the trace above to confirm all call sites pass the correct level. The test `test_read_grant_cannot_edit_metadata` verifies this at runtime.
-
-**Commit:** `0cf2af0` — `authorized()` at line 252 of `app/main.py` uses `select()` throughout. The call-site trace is documented above; the test `test_read_grant_cannot_edit_metadata` in `tests/test_threats.py` provides runtime verification.
+The current helper checks ownership or a named grant. Read access accepts a read or edit grant; edit access requires an edit grant. The document detail, download, and edit routes request their corresponding access levels. Tests including `test_read_grant_cannot_edit_metadata` cover the read-versus-edit boundary. These code and test facts do not independently verify the claimed original AI suggestion.
 
 ---
 
-## Entry 3 — 2026-10-21 — Audit log integrity: hash chain design
+## Entry 3 — Audit chain and database concurrency
 
-**What I asked:** "I need an append-only audit log where tampering can be detected. Each event should include a hash of the previous event so the chain can be verified. Use HMAC-SHA256 with the application secret."
+**Evidence status:** The implementation and commit attribution below are repository-verifiable. The original AI interaction and its date are not independently documented.
 
-**What the AI produced:** A hash-chain implementation that was structurally correct. However, it had two issues:
+The earlier draft combined separate concerns and incorrectly attributed the PostgreSQL advisory lock to commit `0cf2af0`. The timezone-normalization and SQLite WAL changes are present in the initial implementation commit `0cf2af0`. PostgreSQL advisory locking was introduced later in commit `0654a2b`. These are distinct implementation changes; the earlier SQLite-only deployment description is obsolete. The current deployment is configured for Render, Neon PostgreSQL, and Supabase Storage, but live provider behavior and PostgreSQL integration remain unverified.
 
-1. **Timezone handling:** The `occurred_at` field was stored in SQLite as a naive datetime (no timezone). When replaying the chain, the verification function compared it using `.isoformat()`, but SQLite returns naive datetimes, so the stored ISO string (without `+00:00`) didn't match what the verifier computed (which assumed UTC and appended `+00:00`). This caused `audit_integrity()` to return `False` on a chain with no actual tampering.
-
-2. **Concurrent write race:** The AI's version fetched the last event's hash with `SELECT ... ORDER BY id DESC LIMIT 1` and then inserted a new event. On PostgreSQL with multiple workers, two events could read the same `prev_hash` before either commits, breaking the chain. The AI did not mention this risk at all.
-
-**What was wrong, specifically (about access control / audit):**
-The AI was confident the chain was correct. It was not. The timezone bug would cause legitimate integrity checks to fail, and on a deployed system this would make the "ALERT" banner appear constantly, training administrators to ignore it — exactly the wrong behaviour for a tamper-evidence system.
-
-**What I did instead:**
-- Added timezone normalization in `audit_integrity()`: `a.occurred_at.replace(tzinfo=timezone.utc) if a.occurred_at.tzinfo is None else a.occurred_at`.
-- Documented the multi-worker race in THREATS.md (T25) as a known accepted risk for the current SQLite single-worker deployment, with a note that an advisory lock or outbox pattern is needed for PostgreSQL.
-- Enabled SQLite WAL mode (`PRAGMA journal_mode=WAL`) to reduce write contention in single-worker scenarios.
-
-**Commit:** `0cf2af0` — timezone fix at `audit_integrity()` (line 235 of `app/main.py`); WAL mode at the SQLite `connect` event listener (line 143). T25 in `THREATS.md` documents the accepted race risk.
+The audit chain is tamper-evident, not immutable. Tests cover detection of changes and known limitations; they do not establish that the production audit log is independently protected.
 
 ---
 
-## Entry 4 — 2026-10-21 — Rate limiting implementation
+## Entry 4 — Login rate-limiter account
 
-**What I asked:** "Implement a login rate limiter that blocks an IP after 10 failed attempts in 5 minutes, with a 15-minute lockout. It should be thread-safe."
-
-**What the AI produced:** A working sliding-window rate limiter using a `defaultdict(list)` of timestamps and a `Lock`. Structurally correct.
-
-**What was wrong:**
-1. The AI placed the rate check **after** the database query to look up the user. This means that even when rate-limited, we still hit the database and execute Argon2 verification. An attacker doing a credential stuffing attack would still cause significant CPU load even when "blocked". The check must happen **before** any DB work.
-2. The AI did not reset the attempt counter on successful login. This means a legitimate user who made 9 failed attempts (e.g. wrong caps lock) and then succeeded would still be locked out 1 attempt later. I chose to reset on success (`_rate_reset`) which is the standard UX approach.
-3. The rate limiter was per-process in-memory. The AI did not mention this limitation. Documented in THREATS.md (T12).
-
-**What I did instead:** Moved `_rate_check(ip)` to be the first thing called in the `login()` route handler, before any DB access. Added `_rate_reset(ip)` on successful login.
-
-**Commit:** `0cf2af0` — `_rate_check` is the first call inside `login()` (before the `session.scalar` user lookup). `_rate_reset` is called on the success path. Test: `test_rate_limiter_blocks_excessive_attempts` in `tests/test_threats.py`.
+**Evidence status:** The prior draft attributed specific rate-limiter suggestions and corrections to an AI interaction. The current code, tests, and threat documentation can verify implementation characteristics, but not that interaction or its date. The original interaction requires the author's confirmation. This is not presented as verified AI-development evidence.
 
 ---
 
-## Entry 5 — 2026-10-21 — Access control: admin role boundaries
+## Entry 5 — Administrator access-boundary account
 
-**What I asked:** "Make sure the admin role cannot read documents owned by other users. Admin should only see the audit log and manage users."
-
-**What the AI produced:** The AI suggested adding `if user.role == 'admin': return True` inside the `authorized()` function. This would give admins automatic access to all documents.
-
-**What was wrong — specifically about access control:**
-This is the most dangerous suggestion in the entire session. The problem statement explicitly says: *"An administrator ... is not automatically granted access to documents belonging to others."* An AI confident wrong answer here would create a critical vulnerability. If the evaluator logged in as admin and tried to fetch any document UUID directly, they would succeed — violating requirement #1 of the problem statement.
-
-The test `test_admin_cannot_read_owner_document` and `test_admin_cannot_grant_access_to_others_doc` exist precisely to catch this. I rejected the AI's suggestion entirely.
-
-**What I did instead:** Left `authorized()` unchanged — it only checks ownership or named grants. The admin role is checked only in the `/admin` and `/admin/users*` route handlers. I manually verified that no document route has an `if admin` bypass. The test suite confirms this.
-
-**Commit:** `0cf2af0` — `authorized()` at line 252 of `app/main.py` has no role-based shortcut. The admin panel routes check `user.role != 'admin'` in isolation. Tests `test_admin_cannot_read_owner_document` and `test_admin_cannot_grant_access_to_others_doc` in `tests/test_threats.py` verify this.
+**Evidence status:** The prior draft attributed a proposed administrator document-access bypass to an AI interaction. Repository tests and implementation can verify the current access boundary, but do not establish that the suggestion was made or rejected in an actual AI exchange. The original interaction requires the author's confirmation. This is not presented as verified AI-development evidence.
 
 ---
 
-## Entry 6 — 2026-10-21 — User management endpoints
+## Entry 6 — User-management and session account
 
-**What I asked:** "Add admin endpoints to create users, disable/enable accounts, and change roles. Disabled users should be blocked on every request, not just at login."
-
-**What the AI produced:** Endpoints that checked `user.role == 'admin'` in each handler, which is correct. However, it also suggested storing `user.enabled` in the session cookie so the server didn't need to check the DB each time — "for performance".
-
-**What was wrong:**
-Caching the `enabled` flag in the session cookie defeats the requirement that *"taking access away works immediately"*. If the flag is cached in the cookie, a disabled user whose cookie hasn't expired can continue to access the system for up to one hour. This directly contradicts requirement #3 of the problem statement.
-
-**What I did instead:** `current_user()` fetches the user from the database on every request and checks `user.enabled`. The DB query is fast (primary key lookup). Session cookies store only the user ID. The test `test_disabled_user_active_session_denied` verifies that disabling a user mid-session takes effect on the very next request.
-
-**Commit:** `0cf2af0` — `current_user()` at line 193 of `app/main.py` returns `None` if `user.enabled` is falsy, checked on every request. Session stores only `uid` (an integer). Test: `test_disabled_user_active_session_denied` in `tests/test_threats.py`.
+**Evidence status:** The prior draft attributed a suggestion to cache enabled-user state in the session to an AI interaction. The current implementation and tests can verify that enabled status is checked on requests, but do not establish that this suggestion was made or corrected in an actual AI exchange. The original interaction requires the author's confirmation. This is not presented as verified AI-development evidence.
 
 ---
 
-## Prompts and context reused across the session
+## Reusable security prompt template
 
-The following system prompt was prepended to all AI sessions for this project:
+The following is a reusable prompt template, not evidence that this exact text was used in an earlier session:
 
-> "You are helping build a security-critical document-sharing platform. Before suggesting any change to authorisation, access control, or audit logging, reason explicitly about: (1) what an attacker could do if this code is wrong, (2) whether the change widens access without an explicit grant, and (3) whether the change could silence the audit log. Never suggest caching security state in client-controlled storage."
+> You are helping build a security-critical document-sharing platform. Before suggesting any change to authorisation, access control, or audit logging, reason explicitly about: (1) what an attacker could do if this code is wrong, (2) whether the change widens access without an explicit grant, and (3) whether the change could silence the audit log. Never suggest caching security state in client-controlled storage.
 
-This prompt was helpful in reducing confident-but-wrong suggestions on access control. It did not prevent the admin-bypass suggestion in Entry 5, which shows that even a well-prompted AI will suggest security holes. The correction had to come from understanding the requirements.
+---
+
+## Evidence still needed
+
+The author should confirm or correct the historical accounts in Entries 1, 4, 5, and 6, and whether the reusable prompt template reflects an actual prompt. Original prompt records or other contemporaneous evidence would support those claims. Until then, they must not be counted as verified AI-development entries. The original interaction date for Entry 2 and Entry 3 also remains unverified.

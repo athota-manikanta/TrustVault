@@ -40,7 +40,7 @@ class LocalBlobStorage:
 
 
 class SupabaseBlobStorage:
-    def __init__(self, url: str, api_key: str, bucket: str):
+    def __init__(self, url: str, api_key: str, bucket: str, timeout: float = 30.0):
         parsed_url = urlparse(url)
         if parsed_url.scheme != 'https' or not parsed_url.netloc:
             raise ValueError('SUPABASE_URL must be an HTTPS URL')
@@ -54,8 +54,25 @@ class SupabaseBlobStorage:
         self.client = httpx.Client(
             base_url=f'{url.rstrip("/")}/storage/v1/',
             headers=headers,
-            timeout=30.0,
+            timeout=timeout,
         )
+
+    def require_private_bucket(self) -> None:
+        response = self.client.get(f'bucket/{self.bucket}')
+        if response.status_code == 404:
+            raise RuntimeError('Configured Supabase Storage bucket was not found.')
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError:
+            raise RuntimeError(
+                'Supabase Storage bucket preflight failed; check the URL and secret key.'
+            ) from None
+        try:
+            is_public = response.json().get('public')
+        except (ValueError, AttributeError):
+            raise RuntimeError('Supabase Storage returned invalid bucket metadata.') from None
+        if is_public is not False:
+            raise RuntimeError('Configured Supabase Storage bucket must be private.')
 
     @staticmethod
     def _key(key: str) -> str:

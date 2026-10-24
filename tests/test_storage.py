@@ -14,6 +14,8 @@ class FakeSupabase:
     def __call__(self, request):
         self.requests.append(request)
 
+        if request.method == 'GET' and '/bucket/' in request.url.path:
+            return httpx.Response(200, json={'id': 'private-trustvault', 'public': False}, request=request)
         if request.method == 'POST':
             key = request.url.path.rsplit('/', 1)[-1]
             bucket = request.url.path.split('/')[-2]
@@ -92,6 +94,32 @@ def test_supabase_storage_requires_https_and_credentials():
         SupabaseBlobStorage('http://project.supabase.co', 'server-key', 'private')
     with pytest.raises(ValueError, match='secret API key'):
         SupabaseBlobStorage('https://project.supabase.co', '', 'private')
+
+
+def test_supabase_bucket_preflight_requires_private_bucket():
+    fake = FakeSupabase()
+    storage = make_storage(fake)
+    storage.require_private_bucket()
+    assert fake.requests[0].url.path == '/storage/v1/bucket/private-trustvault'
+
+    def public_bucket(request):
+        return httpx.Response(200, json={'id': 'private-trustvault', 'public': True}, request=request)
+
+    public_storage = make_storage(public_bucket)
+    with pytest.raises(RuntimeError, match='must be private'):
+        public_storage.require_private_bucket()
+
+    def denied_bucket(request):
+        return httpx.Response(
+            403,
+            json={'message': 'secret-key-value must not appear'},
+            request=request,
+        )
+
+    denied_storage = make_storage(denied_bucket)
+    with pytest.raises(RuntimeError) as error:
+        denied_storage.require_private_bucket()
+    assert 'secret-key-value' not in str(error.value)
 
 
 def test_create_storage_requires_supabase_settings(monkeypatch):

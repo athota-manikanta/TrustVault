@@ -4,7 +4,7 @@
 
 TrustVault is a server-rendered FastAPI application for sharing documents with individually-named access grants and a tamper-evident audit trail. Document access is enforced server-side on every request. Allowed and denied activity is recorded in an HMAC-keyed hash chain; edited fields and broken links can be detected, but the database is not an immutable audit archive.
 
-The stack: **Python / FastAPI**, **SQLAlchemy 2.x**, **SQLite** (WAL mode), **Jinja2 templates**, **Argon2** password hashing, **Starlette** sessions. No JavaScript frameworks; no client-side routing. This choice was deliberate — the security model lives entirely on the server, so a server-rendered design is the natural fit and eliminates a whole class of token-storage and SPA auth risks.
+The stack: **Python / FastAPI**, **SQLAlchemy 2.x**, **SQLite** with WAL mode for local development and tests, **Jinja2 templates**, **Argon2** password hashing, and **Starlette** sessions. PostgreSQL is supported for the hosted architecture. No JavaScript frameworks or client-side routing are used; authorization decisions remain server-side.
 
 ---
 
@@ -38,7 +38,7 @@ Unauthorized document requests return **404**, not 403, so an attacker cannot co
 | Password reset / email | No email transport in scope; admins reset access by creating new accounts |
 | File versioning | Not required; noted in README and THREATS.md |
 | Antivirus scanning | Magic bytes + extension allowlist is the stated validation check; full AV would need a sidecar service and is explicitly flagged as a residual risk in T7 |
-| Live object storage (Supabase Storage) | Private-storage adapter implemented; no live provider or bucket configured/tested |
+| Provider-backed object storage | A Supabase Storage adapter and private-bucket preflight are implemented; real provider access and persistence were not exercised by the automated tests or independently verified in this audit |
 | Share links with expiry | Bearer links are a known risk for document systems; the problem statement does not require them and omitting them eliminates T3-class attacks |
 | Groups / folder inheritance | Per-document named-user grants are simpler to reason about and audit. Groups add complexity and confusion about who has access. |
 | JWT / bearer tokens | Eliminated persistent tokens that could be replayed after revocation |

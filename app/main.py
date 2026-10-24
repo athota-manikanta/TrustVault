@@ -270,10 +270,15 @@ def authorized(session, doc, user, level='read') -> bool:
 
 def access(request, session, doc_id, level='read', action='access'):
     """Authenticate, authorise and audit in one call. Raises HTTP 401/404."""
+    invalid_id = len(doc_id) > 36
     user = current_user(request, session)
     if not user:
-        audit(session, None, action, doc_id, 'denied', 'unauthenticated')
+        detail = 'unauthenticated; invalid document identifier' if invalid_id else 'unauthenticated'
+        audit(session, None, action, None if invalid_id else doc_id, 'denied', detail)
         raise HTTPException(401, 'Authentication required')
+    if invalid_id:
+        audit(session, user.id, action, None, 'denied', 'invalid document identifier')
+        raise HTTPException(404, 'Document not found')
     doc = session.get(Document, doc_id)
     if not doc or not authorized(session, doc, user, level):
         audit(session, user.id, action, doc_id, 'denied', 'not found or no permission')
