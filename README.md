@@ -16,13 +16,21 @@ TrustVault is a server-rendered FastAPI application built for the Snovasys Fresh
 
 </div>
 
+## Demo Video
+
+Watch the TrustVault project demonstration (5 minutes 35 seconds).
+
+**[Watch TrustVault Demo Video](https://drive.google.com/drive/folders/1FQr8RYhmoXzh6u8blmLFx41KHSu5Ta6h?usp=sharing)**
+
+The video demonstrates document uploads, role-based access, document sharing, permission revocation, and audit logging.
+  
+
+
 ## Why TrustVault?
 
 Document IDs are not permissions. TrustVault checks the signed-in user's current identity and document grant on every protected request—including downloads—so a guessed identifier or a previously open session does not preserve access after revocation. The application combines that authorization model with private object storage integration and an HMAC-linked activity log, while documenting what remains unverified.
 
-## Screenshots
 
-> **Screenshot placeholder:** No application screenshots are currently included in the repository. Add genuine screenshots here after capturing them from the application; no illustrative or generated UI images are presented as product screenshots.
 
 ## Features
 
