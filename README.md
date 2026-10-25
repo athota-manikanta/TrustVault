@@ -124,11 +124,11 @@ Do not put passwords, provider keys, or database URLs in source control. The ini
 
 ## Limitations and verification status
 
-- The only recorded live checks are unauthenticated `GET /` (303), `GET /health` (200), and `GET /login` (200), observed on 2026-10-24. Authentication and stateful live workflows were not verified.
-- Live grant/revocation behavior, PostgreSQL integration, private-bucket configuration, and persistence after a Render restart remain unverified.
-- Fresh-clone setup has not been independently tested. There is no formal schema migration framework or verified demo video.
-- Cross-system deletion is not atomic: the database row and audit event commit before object deletion. A storage failure can leave an orphaned object; there is no retry/outbox mechanism.
-- The login rate limiter is in-memory and per-process. The audit chain is tamper-evident, not immutable. File validation does not include antivirus scanning; file versioning, password reset, self-registration, quotas, and groups are not implemented.
+- **Manual live verification (project owner):** The project owner reports manually testing the deployed TrustVault website and confirms that its functionality is working. This is owner-reported manual verification, not an independently automated live test; no route-by-route results are asserted here.
+- **Local automated tests:** The last recorded full local run was **98 passed, 0 failed, 0 skipped, 1 warning** using isolated SQLite databases and temporary file storage. These tests do not establish hosted-provider behavior.
+- **PostgreSQL integration:** PostgreSQL integration tests were not separately executed. Live database behavior and persistence after a Render restart have not been independently verified.
+- **Known architectural limitations:** Cross-system deletion is not atomic; if object deletion fails after the database transaction commits, an orphaned object can remain. The login rate limiter is in-memory and per-process. The audit chain is tamper-evident, not immutable. Upload validation does not include antivirus scanning. See [THREATS.md](THREATS.md) for the threat analysis and mitigations.
+- **Other gaps:** Fresh-clone setup has not been independently tested. There is no formal schema migration framework or verified demo video. File versioning, password reset, self-registration, quotas, and groups are not implemented.
 - [`PROMPTS.md`](PROMPTS.md) distinguishes code/commit-supported implementation facts from AI-interaction recollections that lack independent records. It does not claim that every historical entry is independently evidenced or that a required count of genuine dated entries has been established.
 
-These limits are intentional disclosures, not claims that the corresponding behaviors have been verified in production.
+These statements distinguish the project owner's manual live confirmation from automated local tests and independent provider-integration evidence.
